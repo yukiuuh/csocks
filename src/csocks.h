@@ -1,6 +1,6 @@
 #include "unistd.h"
 
-#define CSOCKS_PORT 11111
+#define CSOCKS_PORT_DEFAULT 8080
 #define USER_ID_BUFFER_SIZE 1024
 #define MSGSIZE 1024
 #define BUFSIZE (MSGSIZE + 1)

@@ -6,6 +6,13 @@
 #include <netinet/tcp.h>
 #include <string.h>
 #include <sys/select.h>
+#include <stdlib.h>
+
+void close_connection(int retval, int fd)
+{
+    close(fd);
+    pthread_exit((void *)&retval);
+}
 
 int get_ops(int client_sock, char *socks_version)
 {
@@ -19,8 +26,9 @@ int get_ops(int client_sock, char *socks_version)
     {
         LOGGER("version?");
         LOGGER("%hhX %hhX", bytes[0], bytes[1]);
-        close(client_sock);
-        pthread_exit(0);
+        // close(client_sock);
+        // pthread_exit(1);
+        close_connection(1,client_sock);
     }
     LOGGER("%hhX %hhX", bytes[0], bytes[1]);
     *socks_version = bytes[0];
@@ -141,8 +149,9 @@ int process_connect(int client_sock)
     if (err)
     {
         connect_reply(client_sock, C_REQUEST_REJECTED_OR_FAILED);
-        close(client_sock);
-        pthread_exit(1);
+        // close(client_sock);
+        // pthread_exit(1);
+        close_connection(1,client_sock);
     }
 
     nread = read(client_sock, (void *)user_id, ARRAY_SIZE(user_id));
@@ -158,15 +167,17 @@ int process_connect(int client_sock)
     else
     {
         connect_reply(client_sock, C_REQUEST_REJECTED_OR_FAILED);
-        close(client_sock);
-        pthread_exit(1);
+        // close(client_sock);
+        // pthread_exit(1);
+        close_connection(1,client_sock);
     }
 
     pipe_fd(client_sock, relay_sock);
     close(relay_sock);
-    close(client_sock);
-    LOGGER("%lu", pthread_self());
-    pthread_exit(0);
+    // close(client_sock);
+    // LOGGER("%lu", pthread_self());
+    // pthread_exit(0);
+    close_connection(0, client_sock);
     return 0;
 }
 
@@ -192,7 +203,8 @@ int connection(int *client_sock_ref)
     case C_BIND:
     {
         LOGGER("BIND received");
-
+        LOGGER("BIND is not implemented...");
+        return 1;
         break;
     }
     }
@@ -205,20 +217,29 @@ int main(int argc, char *argv[])
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
     char buf[BUFSIZE];
+    int csocks_port;
 
+    if (argc == 1)
+    {
+        csocks_port = CSOCKS_PORT_DEFAULT;
+    }
+    else
+    {
+        csocks_port = atoi(argv[1]);
+    }
 
     // TCP socket
     server_sock = socket(AF_INET, SOCK_STREAM, 0);
     LOGGER("Server socket is %d", server_sock);
 
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(CSOCKS_PORT);
+    server_addr.sin_port = htons(csocks_port);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
     bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
     listen(server_sock, MAX_CLIENT_NUM);
-    LOGGER("Server listening on port %d...", CSOCKS_PORT);
+    LOGGER("Server listening on port %d...", csocks_port);
 
     while (1)
     {
@@ -234,7 +255,7 @@ int main(int argc, char *argv[])
 
         int nodelay = 1;
         setsockopt(client_sock, SOL_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-        if (pthread_create(&t_connection, NULL, connection, (void *)&client_sock) == 0)
+        if (pthread_create(&t_connection, NULL, (void *)connection, (void *)&client_sock) == 0)
         {
             LOGGER("pthread_create()");
             pthread_detach(t_connection);
