@@ -7,7 +7,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <stdlib.h>
-
+#include <errno.h>
 void close_connection(int retval, int fd)
 {
     close(fd);
@@ -84,14 +84,14 @@ int pipe_fd(int fd1, int fd2)
 {
     int maxfd;
     fd_set read_fds;
-    // maxfd = (fd1 > fd2) ? fd1 : fd2;
+    maxfd = (fd1 > fd2) ? fd1 : fd2;
     while (1)
     {
         FD_ZERO(&read_fds);
         FD_SET(fd1, &read_fds);
         FD_SET(fd2, &read_fds);
 
-        if (select(FD_SETSIZE, &read_fds, NULL, NULL, NULL) < 0)
+        if (select(maxfd + 1, &read_fds, NULL, NULL, NULL) < 0)
         {
             perror("select");
             return 1;
@@ -99,14 +99,14 @@ int pipe_fd(int fd1, int fd2)
 
         if (FD_ISSET(fd1, &read_fds))
         {
-            LOGGER("fd1 to fd2");
+            LOGGER("fd1(%d) to fd2(%d)", fd1, fd2);
             if (transfer(fd1, fd2) == 0)
                 return 0;
         }
 
         if (FD_ISSET(fd2, &read_fds))
         {
-            LOGGER("fd2 to fd1");
+            LOGGER("fd2(%d) to fd1(%d)", fd2, fd1);
             if (transfer(fd2, fd1) == 0)
                 return 0;
         }
@@ -149,8 +149,6 @@ int process_connect(int client_sock)
     if (err)
     {
         connect_reply(client_sock, C_REQUEST_REJECTED_OR_FAILED);
-        // close(client_sock);
-        // pthread_exit(1);
         close_connection(1,client_sock);
     }
 
@@ -167,16 +165,12 @@ int process_connect(int client_sock)
     else
     {
         connect_reply(client_sock, C_REQUEST_REJECTED_OR_FAILED);
-        // close(client_sock);
-        // pthread_exit(1);
+
         close_connection(1,client_sock);
     }
 
     pipe_fd(client_sock, relay_sock);
     close(relay_sock);
-    // close(client_sock);
-    // LOGGER("%lu", pthread_self());
-    // pthread_exit(0);
     close_connection(0, client_sock);
     return 0;
 }
@@ -218,6 +212,7 @@ int main(int argc, char *argv[])
     socklen_t client_addr_len = sizeof(client_addr);
     char buf[BUFSIZE];
     int csocks_port;
+    int status;
 
     if (argc == 1)
     {
@@ -236,9 +231,15 @@ int main(int argc, char *argv[])
     server_addr.sin_port = htons(csocks_port);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    status = bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
-    listen(server_sock, MAX_CLIENT_NUM);
+    if (status != 0)
+        LOGGER("bind failed status=%d,errno=%d", status, errno);
+
+    status = listen(server_sock, MAX_CLIENT_NUM);
+    if (status != 0)
+        LOGGER("listen failed status=%d,errno=%d", status, errno);
+
     LOGGER("Server listening on port %d...", csocks_port);
 
     while (1)
