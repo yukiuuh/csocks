@@ -18,27 +18,21 @@ int read_destination_socks4(int sock_client, uint8_t *dst_ip, uint16_t *dst_port
     int nread;
 
     nread = readn(sock_client, (void *)dst_port, sizeof(*dst_port));
-    if (nread == sizeof(*dst_port))
-    {
-
-        LOGGER("dst port %hu", ntohs(*dst_port));
-    }
-    else
+    if (nread < sizeof(*dst_port))
     {
         perror("dst_port?");
         return 1;
     }
+    LOGGER("dst port %hu", ntohs(*dst_port));
 
     nread = readn(sock_client, dst_ip, 4);
-    if (nread == 4)
-    {
-        LOGGER("dst ip %hhu.%hhu.%hhu.%hhu", dst_ip[0], dst_ip[1], dst_ip[2], dst_ip[3]);
-    }
-    else
+    if (nread < 4)
     {
         perror("dst_ip?");
         return 1;
     }
+    LOGGER("dst ip %hhu.%hhu.%hhu.%hhu", dst_ip[0], dst_ip[1], dst_ip[2], dst_ip[3]);
+
     return 0;
 }
 int read_ops(int sock_client, uint8_t *socks_version)
@@ -80,15 +74,13 @@ int read_destination_socks5(int sock_client, SOCKS_ADDRESS_TYPES address_type, i
     {
         *n_dst_addr = 4;
         nread = readn(sock_client, dst_addr, 4);
-        if (nread == 4)
-        {
-            LOGGER("dstination ip:%hhu.%hhu.%hhu.%hhu", dst_addr[0], dst_addr[1], dst_addr[2], dst_addr[3]);
-        }
-        else
+        if (nread < 4)
         {
             perror("dst_ip?");
             return 1;
         }
+        LOGGER("dstination ip:%hhu.%hhu.%hhu.%hhu", dst_addr[0], dst_addr[1], dst_addr[2], dst_addr[3]);
+
         break;
     }
     case ATYPE_DOMAINNAME:
@@ -101,12 +93,12 @@ int read_destination_socks5(int sock_client, SOCKS_ADDRESS_TYPES address_type, i
         }
         *n_dst_addr = (int)n_domain_address;
         nread = readn(sock_client, dst_addr, *n_dst_addr);
-        dst_addr[*n_dst_addr] = '\0'; // null termination
         if (nread != *n_dst_addr)
         {
             perror("dst addr?");
             return 1;
         }
+        dst_addr[*n_dst_addr] = '\0'; // null termination
         break;
     }
     default:
@@ -130,12 +122,6 @@ int read_destination_socks5(int sock_client, SOCKS_ADDRESS_TYPES address_type, i
 int reply_connect_socks5(int sock_client, SOCKS5_REPLYS reply_code)
 {
     uint8_t resp[10] = {VERSION5, (char)reply_code, 0x00, ATYPE_IPV4, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
-    writen(sock_client, (void *)resp, ARRAY_SIZE(resp));
-}
-
-int reply_fail_socks5(int sock_client)
-{
-    uint8_t resp[10] = {VERSION5, R_GENERAL_FAIL, 0x00, ATYPE_IPV4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     writen(sock_client, (void *)resp, ARRAY_SIZE(resp));
 }
 
@@ -252,13 +238,11 @@ int process_connect(int sock_client, SOCKS_VERSIONS socks_version)
     int nread;
     int err = 0;
 
-    if (socks_version == VERSION5)
+    switch (socks_version)
     {
-        LOGGER("process socks5");
-
-        // ignore reserved byte
-        nread = readn(sock_client, (void *)&address_type, sizeof(address_type));
-        // LOGGER("rsv %hhx", address_type);
+    case VERSION5:
+    {
+        nread = readn(sock_client, (void *)&address_type, sizeof(address_type)); // ignore reserved byte
 
         nread = readn(sock_client, (void *)&address_type, sizeof(address_type));
         LOGGER("address type %hhx", address_type);
@@ -272,52 +256,51 @@ int process_connect(int sock_client, SOCKS_VERSIONS socks_version)
 
         if (err != 0)
         {
-            reply_fail_socks5(sock_client);
+            reply_connect_socks5(sock_client, R_GENERAL_FAIL);
             close_connection(1, sock_client);
         }
-
         sock_relay = get_relay_socket_socks5(address_type, n_dst_addr, dst_addr, dst_port);
 
-        if (sock_relay != -1)
+        if (sock_relay == -1)
         {
-            reply_connect_socks5(sock_client, R_SUCCESS);
-        }
-        else
-        {
-            reply_fail_socks5(sock_client);
+            reply_connect_socks5(sock_client, R_GENERAL_FAIL);
             close_connection(1, sock_client);
         }
+        reply_connect_socks5(sock_client, R_SUCCESS);
+        break;
     }
-    else if (socks_version == VERSION4)
+    case VERSION4:
     {
         err = read_destination_socks4(sock_client, dst_ip, &dst_port);
 
-        if (err)
+        if (err != 0)
         {
             reply_connect_socks4(sock_client, C_REQUEST_REJECTED_OR_FAILED);
             close_connection(1, sock_client);
         }
 
         nread = read(sock_client, (void *)user_id, ARRAY_SIZE(user_id));
-        LOGGER("user id=%s (size=%d)", (char* )user_id, nread);
+        LOGGER("user id=%s (size=%d)", (char *)user_id, nread);
         // however ignore user id...
 
         sock_relay = get_relay_socket_socks4(dst_port, dst_ip);
 
-        if (sock_relay != -1)
-        {
-            reply_connect_socks4(sock_client, C_REQUEST_GRANTED);
-        }
-        else
+        if (sock_relay == -1)
         {
             reply_connect_socks4(sock_client, C_REQUEST_REJECTED_OR_FAILED);
             close_connection(1, sock_client);
         }
+        reply_connect_socks4(sock_client, C_REQUEST_GRANTED);
+
+        break;
+    }
     }
 
     pipe_fd(sock_client, sock_relay);
+
     close(sock_relay);
     close_connection(0, sock_client);
+
     return 0;
 }
 
@@ -330,11 +313,11 @@ int connection(int *ref_sock_client)
 
     socks_command = read_ops(sock_client, &socks_version);
 
+    // in socks5, need authentication negotiation
     if (socks_version == VERSION5)
     {
-        // in socks5, need authentication negotiation
         int nmethods = socks_command;
-        uint8_t tmp[256];
+        uint8_t tmp[256]; // max domain name length 255 + 1
         nread = readn(sock_client, tmp, nmethods);
         if (nread != nmethods)
         {
@@ -359,9 +342,7 @@ int connection(int *ref_sock_client)
     case C_CONNECT:
     {
         LOGGER("CONNECT received");
-
         process_connect(sock_client, socks_version);
-
         break;
     }
     case C_BIND:
@@ -424,7 +405,7 @@ int main(int argc, char *argv[])
         sock_client = accept(sock_server, (struct sockaddr *)&client_addr, &client_addr_len);
         if (sock_client < 0)
         {
-            perror("accept failed");
+            LOGGER("accept failed");
             continue;
         }
         LOGGER("accept from %s fd=%d", inet_ntoa(client_addr.sin_addr), sock_client);
@@ -432,14 +413,13 @@ int main(int argc, char *argv[])
         int nodelay = 1;
         setsockopt(sock_client, SOL_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
-        if (pthread_create(&t_connection, NULL, (void *)connection, (void *)&sock_client) == 0)
+        if (pthread_create(&t_connection, NULL, (void *)connection, (void *)&sock_client) != 0)
         {
-            pthread_detach(t_connection);
+            LOGGER("pthread create failed");
+            continue;
         }
-        else
-        {
-            perror("pthread_create failed");
-        }
+
+        pthread_detach(t_connection);
     }
 
     return 0;

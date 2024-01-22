@@ -2,7 +2,7 @@
 #include <sys/select.h>
 #include <pthread.h>
 #include <stdio.h>
-#define BUFSIZE 1024
+#define BUFSIZE 1500
 #define LOGGER(...) printf("(%lx) %s(%d) %s: ", pthread_self(), __FILE__, __LINE__, __func__), printf(__VA_ARGS__), printf("\n")
 
 void close_connection(int retval, int fd)
